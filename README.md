@@ -1,5 +1,6 @@
 ﻿# 💸 PennyPilot — Autonomous Multimodal Expense & Financial Health Agent
 
+> **Live Application:** [https://pennypilot-ai.streamlit.app](https://pennypilot-ai.streamlit.app)  
 > **Built with:** Python 3.11+ • Google Gemini Multimodal Vision • LangGraph (Human-in-the-Loop State Machine) • ChromaDB (Self-Learning RAG) • SQLite • Pandas • Streamlit • Plotly
 
 ---
@@ -117,4 +118,5 @@ pytest tests/ -v
 
 ## 👩‍💻 Author
 **Ananya Kastiya**  
-GitHub: [https://github.com/AnanyaKastiya/Penny-pilot](https://github.com/AnanyaKastiya/Penny-pilot)
+Live Application: [https://pennypilot-ai.streamlit.app](https://pennypilot-ai.streamlit.app)  
+GitHub Repository: [https://github.com/AnanyaKastiya/Penny-pilot](https://github.com/AnanyaKastiya/Penny-pilot)
