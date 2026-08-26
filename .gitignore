@@ -1,0 +1,6 @@
+﻿.env
+__pycache__/
+*.pyc
+chroma_data/
+pennypilot.db
+.pytest_cache/
