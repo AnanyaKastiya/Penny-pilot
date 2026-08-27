@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import io
 from datetime import datetime
@@ -65,14 +65,19 @@ def parse_expense_text(
     
     cats = allowed_categories or DEFAULT_CATEGORIES
     categories_str = ", ".join(cats)
-    system_instruction = f"""You are PennyPilot, an expert financial entity extractor.
+    system_instruction = f"""You are PennyPilot, an elite multimodal financial scanner specialized in extracting financial transactions from text and Indian UPI screenshots (Google Pay, PhonePe, Paytm, CRED, Bank Statements).
 Current Date: {today_str}
 Allowed Categories: [{categories_str}]
 
-Rules for Transaction Types:
-1. 'DEBIT' = User spent, sent, paid, or bought something.
-2. 'CREDIT' = User received money, friend repaid split bill, refund, or cashback.
-3. For peer transfers (Mahima, Tanya, Rahul), set entity_type='peer_friend' and needs_clarification=True.
+EXTRACTION & CLARIFICATION RULES:
+1. Extract EVERY single transaction listed. If multiple dates/lines or multiple screenshot rows exist, extract ALL of them.
+2. 'DEBIT' = User spent, sent, or paid money.
+3. 'CREDIT' = User received money, refund, cashback, or friend repaid bill.
+4. When to set needs_clarification=FALSE (DO NOT ASK QUESTIONS):
+   - When the item/purpose is clear (e.g. 'tiffin', 'canteen', 'lunch', 'groceries', 'cab', 'auto', 'metro', 'blinkit', 'swiggy', 'zomato', 'treat'). Set category='Food & Dining', 'Groceries', 'Travel & Commute', etc. and needs_clarification=False.
+   - For recognized merchants, shops, stores, and enterprises (e.g., 'Gautam Enterprises', 'Chai Point'), categorize directly and set needs_clarification=False.
+5. When to set needs_clarification=TRUE:
+   - ONLY for peer transfers to individuals/friends where the purpose is completely unspecified (e.g. 'Paid 300 to Mahima' with no items mentioned, or 'Received 200 from Tanya').
 """
 
     prompt = f"User Input: \"{text}\""
@@ -129,17 +134,13 @@ def parse_receipt_image(
 Current Date: {today_str}
 Allowed Categories: [{categories_str}]
 
-CRITICAL TRANSACTION TYPE DETECTION RULES:
-1. Pay close attention to whether the transaction is an Outgoing Expense (DEBIT) or Incoming Money (CREDIT):
+EXTRACTION & CLARIFICATION RULES:
+1. Scan the ENTIRE screenshot from top to bottom and extract EVERY transaction row/card visible.
+2. Pay close attention to whether the transaction is an Outgoing Expense (DEBIT) or Incoming Money (CREDIT):
    - 'DEBIT' (Paid to, Sent to, Debited from account, minus sign '-', red color text, 'Paid ₹X').
    - 'CREDIT' (Received from, Credited to account, plus sign '+', green color text, 'Received ₹X', 'Cashback', 'Refund').
    - If a friend (e.g. Mahima, Tanya) sent/paid the user money, mark transaction_type='CREDIT', notes='Received payment / Bill reimbursement', and entity_type='peer_friend'.
-
-2. Scan the ENTIRE screenshot from top to bottom and extract EVERY transaction.
-
-3. INDIVIDUAL CLARIFICATION RULES:
-   - For 'CREDIT' payments from friends, ask: "What was this ₹X received from [Name] for? (e.g., Food split reimbursement, Rent share)".
-   - For 'DEBIT' payments to friends/unknowns, ask what the payment was for.
+3. Set needs_clarification=TRUE ONLY for peer transfers to friends/individuals where purpose is completely ambiguous. For shops, merchants, enterprises, and recognizable services, set needs_clarification=FALSE.
 """
 
     image_part = types.Part.from_bytes(data=opt_bytes, mime_type=opt_mime)
