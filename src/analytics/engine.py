@@ -1,4 +1,4 @@
-﻿import pandas as pd
+import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Optional
@@ -16,6 +16,15 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
         clean['transaction_type'] = 'DEBIT'
     else:
         clean['transaction_type'] = clean['transaction_type'].fillna('DEBIT').str.upper()
+
+    # AUTO-DETECT: If notes, raw_input, or recipient_name indicates received money / reimbursement
+    if 'notes' in clean.columns:
+        rec_notes = clean['notes'].fillna('').str.lower().str.contains('received|credited|refund|cashback|reimbursement|repaid|settled up|got from|sent me')
+        clean.loc[rec_notes, 'transaction_type'] = 'CREDIT'
+    if 'raw_input' in clean.columns:
+        rec_input = clean['raw_input'].fillna('').str.lower().str.contains('received|credited to|cashback|refund|sent you|received from')
+        clean.loc[rec_input, 'transaction_type'] = 'CREDIT'
+
     return clean
 
 def get_overall_summary(df: pd.DataFrame) -> Dict[str, Any]:

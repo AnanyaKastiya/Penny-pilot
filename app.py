@@ -15,7 +15,7 @@ from src.database.db import (
     init_db, add_transaction, get_all_transactions, 
     delete_transaction, set_monthly_budget, get_monthly_budget,
     get_user_categories, add_user_category, delete_user_category,
-    get_all_existing_users
+    get_all_existing_users, update_transaction_type
 )
 from src.database.seeder import seed_guest_data_if_empty
 from src.analytics.engine import (
@@ -623,6 +623,24 @@ elif selected_step == "Step 2: 📊 Spending Breakdown & Trends":
             "payment_app": "Payment Mode"
         })
         st.dataframe(table_show, use_container_width=True, hide_index=True)
+        
+        with st.expander("✏️ Correct / Toggle Any Transaction Type (Spent vs Received)"):
+            tx_options = {row['id']: f"ID {row['id']}: {row['Recipient / Sender']} ({row['amount']}) on {row['date']}" for _, row in table_show.iterrows()}
+            selected_tx_id = st.selectbox("Select Transaction to Adjust", options=list(tx_options.keys()), format_func=lambda x: tx_options[x])
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                new_type_choice = st.selectbox("Set Correct Type", ["CREDIT (Money Received / Reimbursement)", "DEBIT (Money Spent / Expense)"])
+                if st.button("Update Transaction Type 🔄", type="primary", use_container_width=True):
+                    chosen_t = "CREDIT" if "CREDIT" in new_type_choice else "DEBIT"
+                    update_transaction_type(selected_tx_id, chosen_t, user_id=active_user_id)
+                    st.success(f"✅ Updated Transaction #{selected_tx_id} to {chosen_t}!")
+                    st.rerun()
+            with col_t2:
+                st.write("")
+                if st.button("🗑️ Delete Selected Transaction", type="secondary", use_container_width=True):
+                    delete_transaction(selected_tx_id, user_id=active_user_id)
+                    st.success(f"🗑️ Deleted Transaction #{selected_tx_id}!")
+                    st.rerun()
     else:
         st.info("No records in this ledger yet.")
 

@@ -4,8 +4,9 @@ import pandas as pd
 from datetime import datetime
 from pennypilot.src.database.db import (
     init_db, add_transaction, get_all_transactions, 
-    update_transaction_category, delete_transaction, set_monthly_budget, get_monthly_budget,
-    get_user_categories, add_user_category, delete_user_category, get_all_existing_users
+    update_transaction_category, update_transaction_type, delete_transaction, 
+    set_monthly_budget, get_monthly_budget, get_user_categories, 
+    add_user_category, delete_user_category, get_all_existing_users
 )
 from pennypilot.src.database.seeder import seed_guest_data_if_empty
 from pennypilot.src.analytics.engine import (
@@ -58,18 +59,27 @@ def test_custom_user_categories():
     assert "Freshers Party Contribution" not in updated_cats
     assert "Treat to Juniors" in updated_cats
 
-def test_net_spend_with_received_credit():
+def test_received_payment_in_notes_auto_converts_to_credit():
     init_db()
     uid = f"user_{uuid.uuid4().hex[:8]}"
-    add_transaction("2026-08-25", 500.0, "Restaurant", "Food & Dining", transaction_type="DEBIT", user_id=uid)
-    add_transaction("2026-08-25", 200.0, "Mahima", "Food & Dining", transaction_type="CREDIT", notes="Received payment", user_id=uid)
+    # User adds a debit expense of 1000
+    add_transaction("2026-08-23", 1000.0, "Restaurant", "Food & Dining", user_id=uid)
+    # User adds a transaction with notes "Received payment" (e.g. Tanya Gupta / Mahima Bachhav)
+    add_transaction("2026-08-23", 316.0, "TANYA GUPTA", "Food & Dining", notes="Received payment", user_id=uid)
+    add_transaction("2026-08-23", 100.0, "Mahima Bachhav", "Food & Dining", notes="Received payment", user_id=uid)
 
     df = get_all_transactions(user_id=uid)
-    summary = get_overall_summary(df)
     
-    assert summary["gross_spend"] == 500.0
-    assert summary["total_received"] == 200.0
-    assert summary["total_spend"] == 300.0
+    # Check that both received items are classified as CREDIT
+    tanya_row = df[df["recipient_name"] == "TANYA GUPTA"].iloc[0]
+    mahima_row = df[df["recipient_name"] == "Mahima Bachhav"].iloc[0]
+    assert tanya_row["transaction_type"] == "CREDIT"
+    assert mahima_row["transaction_type"] == "CREDIT"
+
+    summary = get_overall_summary(df)
+    assert summary["gross_spend"] == 1000.0
+    assert summary["total_received"] == 416.0
+    assert summary["total_spend"] == 584.0  # 1000 - 416 = 584 Net Spend
 
 def test_chroma_permanent_vs_variable_memory(tmp_path):
     mem = MerchantMemory(persist_dir=str(tmp_path / "test_chroma"))

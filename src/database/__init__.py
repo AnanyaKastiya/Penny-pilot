@@ -7,6 +7,7 @@
     delete_user_category,
     get_all_existing_users,
     update_transaction_category,
+    update_transaction_type,
     delete_transaction,
     set_monthly_budget,
     get_monthly_budget
@@ -21,6 +22,7 @@ __all__ = [
     "delete_user_category",
     "get_all_existing_users",
     "update_transaction_category",
+    "update_transaction_type",
     "delete_transaction",
     "set_monthly_budget",
     "get_monthly_budget"

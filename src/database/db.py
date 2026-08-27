@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 import pandas as pd
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -80,6 +80,22 @@ def init_db():
             )
         ''')
 
+        # Auto-heal: Fix any existing transactions where notes or raw_input indicate received/credit
+        cursor.execute('''
+            UPDATE transactions
+            SET transaction_type = 'CREDIT'
+            WHERE (
+                LOWER(notes) LIKE '%received%' OR
+                LOWER(notes) LIKE '%credited%' OR
+                LOWER(notes) LIKE '%refund%' OR
+                LOWER(notes) LIKE '%cashback%' OR
+                LOWER(notes) LIKE '%reimbursement%' OR
+                LOWER(raw_input) LIKE '%received%' OR
+                LOWER(raw_input) LIKE '%sent you%' OR
+                LOWER(raw_input) LIKE '%refund%'
+            ) AND transaction_type != 'CREDIT'
+        ''')
+
         conn.commit()
 
 def add_transaction(
@@ -98,7 +114,14 @@ def add_transaction(
 ) -> int:
     """Inserts a new transaction for a specific user and returns its ID."""
     created_at = datetime.now().isoformat()
-    clean_type = "CREDIT" if "credit" in transaction_type.lower() or "received" in transaction_type.lower() else "DEBIT"
+    
+    # Check all fields for incoming credit / reimbursement indications
+    all_text = f"{transaction_type} {notes or ''} {raw_input or ''}".lower()
+    if any(k in all_text for k in ['credit', 'received', 'credited', 'refund', 'cashback', 'reimbursement', 'repaid', 'got from']):
+        clean_type = "CREDIT"
+    else:
+        clean_type = "DEBIT"
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -114,15 +137,25 @@ def add_transaction(
         return cursor.lastrowid
 
 def get_all_transactions(user_id: str = 'guest') -> pd.DataFrame:
-    """Returns all transactions for a specific user as a DataFrame."""
+    """Returns all transactions for a specific user as a DataFrame with verified DEBIT/CREDIT types."""
     with get_connection() as conn:
         df = pd.read_sql_query(
             'SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, id DESC', 
             conn, 
             params=(user_id,)
         )
-        if not df.empty and 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
+        if not df.empty:
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+            if 'transaction_type' not in df.columns:
+                df['transaction_type'] = 'DEBIT'
+            # AUTO-HEAL: If notes or raw_input indicates received money, set type to CREDIT
+            if 'notes' in df.columns:
+                rec_notes = df['notes'].fillna('').str.lower().str.contains('received|credited|refund|cashback|reimbursement|repaid|settled up|got from|sent me')
+                df.loc[rec_notes, 'transaction_type'] = 'CREDIT'
+            if 'raw_input' in df.columns:
+                rec_input = df['raw_input'].fillna('').str.lower().str.contains('received|credited to|cashback|refund|sent you|received from')
+                df.loc[rec_input, 'transaction_type'] = 'CREDIT'
         return df
 
 def get_user_categories(user_id: str = 'guest') -> List[str]:
@@ -202,6 +235,18 @@ def update_transaction_category(transaction_id: int, new_category: str, notes: O
             SET category = ?, notes = COALESCE(?, notes), is_clarified = 1
             WHERE id = ? AND user_id = ?
         ''', (new_category, notes, transaction_id, user_id))
+        conn.commit()
+
+def update_transaction_type(transaction_id: int, transaction_type: str, user_id: str = 'guest'):
+    """Updates the transaction type (DEBIT or CREDIT) of an existing transaction."""
+    clean_type = "CREDIT" if "credit" in transaction_type.lower() or "received" in transaction_type.lower() else "DEBIT"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE transactions 
+            SET transaction_type = ? 
+            WHERE id = ? AND user_id = ?
+        ''', (clean_type, transaction_id, user_id))
         conn.commit()
 
 def delete_transaction(transaction_id: int, user_id: str = 'guest'):
