@@ -16,7 +16,7 @@ class ParsedTransaction(BaseModel):
     recipient_upi: Optional[str] = Field(None, description="UPI ID if found (e.g., merchant@okaxis)")
     date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     time: Optional[str] = Field(None, description="Transaction time in HH:MM format if available")
-    category: str = Field("Miscellaneous", description="One of the standard categories")
+    category: str = Field("Miscellaneous", description="One of the allowed categories")
     payment_app: str = Field("Manual", description="GPay, PhonePe, Paytm, CRED, Bank, or Manual")
     transaction_type: str = Field("DEBIT", description="'DEBIT' if user paid/sent money, 'CREDIT' if user received/got money or refund")
     confidence: float = Field(1.0, description="Confidence score between 0.0 and 1.0")
@@ -35,20 +35,26 @@ def get_client(api_key: Optional[str] = None) -> genai.Client:
         raise ValueError("GEMINI_API_KEY is not configured. Please set it in .env or provide it in the UI.")
     return genai.Client(api_key=key)
 
-def parse_expense_text(text: str, api_key: Optional[str] = None) -> List[ParsedTransaction]:
-    """Parses natural language expense text into one or more structured transactions."""
+def parse_expense_text(
+    text: str, 
+    api_key: Optional[str] = None, 
+    allowed_categories: Optional[List[str]] = None
+) -> List[ParsedTransaction]:
+    """Parses natural language expense text into structured transactions considering custom categories."""
     client = get_client(api_key)
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    categories_str = ", ".join(DEFAULT_CATEGORIES)
+    cats = allowed_categories or DEFAULT_CATEGORIES
+    categories_str = ", ".join(cats)
     system_instruction = f"""You are PennyPilot, an expert financial entity extractor.
 Current Date: {today_str}
-Allowed Categories: [{categories_str}]
+Allowed Categories (including user custom categories): [{categories_str}]
 
 Rules for Transaction Types:
 1. 'DEBIT' = User spent, sent, paid, or bought something.
 2. 'CREDIT' = User received money, friend repaid split bill, refund, or cashback (e.g., 'received 300 from Tanya', 'Mahima sent me 100 for dinner').
-3. For peer transfers (Mahima, Tanya, Rahul), set entity_type='peer_friend' and needs_clarification=True.
+3. You may assign any category from the Allowed Categories list, including specific custom categories if appropriate.
+4. For peer transfers (Mahima, Tanya, Rahul), set entity_type='peer_friend' and needs_clarification=True.
 """
 
     prompt = f"User Input: \"{text}\""
@@ -85,15 +91,21 @@ Rules for Transaction Types:
         )
     ]
 
-def parse_receipt_image(image_bytes: bytes, mime_type: str = "image/jpeg", api_key: Optional[str] = None) -> List[ParsedTransaction]:
-    """Scans and extracts ALL visible transactions (debits & credits) from a UPI history/passbook screenshot."""
+def parse_receipt_image(
+    image_bytes: bytes, 
+    mime_type: str = "image/jpeg", 
+    api_key: Optional[str] = None,
+    allowed_categories: Optional[List[str]] = None
+) -> List[ParsedTransaction]:
+    """Scans and extracts ALL transactions from a screenshot considering user custom categories."""
     client = get_client(api_key)
     today_str = datetime.now().strftime("%Y-%m-%d")
-    categories_str = ", ".join(DEFAULT_CATEGORIES)
+    cats = allowed_categories or DEFAULT_CATEGORIES
+    categories_str = ", ".join(cats)
 
     system_instruction = f"""You are PennyPilot, an elite multimodal financial scanner specialized in Indian UPI screenshots (Google Pay, PhonePe, Paytm, CRED, Bank Statements).
 Current Date: {today_str}
-Allowed Categories: [{categories_str}]
+Allowed Categories (including user custom categories): [{categories_str}]
 
 CRITICAL TRANSACTION TYPE DETECTION RULES:
 1. Pay close attention to whether the transaction is an Outgoing Expense (DEBIT) or Incoming Money (CREDIT):
@@ -106,7 +118,7 @@ CRITICAL TRANSACTION TYPE DETECTION RULES:
 3. INDIVIDUAL CLARIFICATION RULES:
    - For 'CREDIT' payments from friends, ask: "What was this ₹X received from [Name] for? (e.g., Food split reimbursement, Rent share)".
    - For 'DEBIT' payments to friends/unknowns, ask what the payment was for.
-   - For obvious stores (Uber, BESCOM, Netflix), set needs_clarification=False and confidence=1.0.
+   - You may suggest standard or custom categories from the Allowed Categories list.
 """
 
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)

@@ -3,7 +3,7 @@ from typing import TypedDict, List, Optional, Dict, Any
 from langgraph.graph import StateGraph, END
 from ..ai.parser import parse_expense_text, parse_receipt_image, ParsedTransaction
 from ..ai.memory import memory_store
-from ..database.db import add_transaction
+from ..database.db import add_transaction, get_user_categories
 
 class AgentState(TypedDict):
     user_id: str
@@ -11,6 +11,7 @@ class AgentState(TypedDict):
     image_bytes: Optional[bytes]
     mime_type: Optional[str]
     api_key: Optional[str]
+    allowed_categories: Optional[List[str]]
     parsed_transactions: List[Dict[str, Any]]
     needs_clarification: bool
     pending_questions: List[Dict[str, Any]]
@@ -22,6 +23,8 @@ class AgentState(TypedDict):
 def parse_input_node(state: AgentState) -> Dict[str, Any]:
     """Node 1: Extracts ALL transactions (debits & credits) from text or UPI screenshot."""
     api_key = state.get("api_key")
+    user_id = state.get("user_id", "guest")
+    allowed_cats = state.get("allowed_categories") or get_user_categories(user_id)
     transactions = []
     
     try:
@@ -29,16 +32,21 @@ def parse_input_node(state: AgentState) -> Dict[str, Any]:
             tx_list = parse_receipt_image(
                 image_bytes=state["image_bytes"],
                 mime_type=state.get("mime_type", "image/jpeg"),
-                api_key=api_key
+                api_key=api_key,
+                allowed_categories=allowed_cats
             )
             transactions = [t.model_dump() for t in tx_list]
         elif state.get("raw_text"):
-            tx_list = parse_expense_text(state["raw_text"], api_key=api_key)
+            tx_list = parse_expense_text(
+                state["raw_text"], 
+                api_key=api_key,
+                allowed_categories=allowed_cats
+            )
             transactions = [t.model_dump() for t in tx_list]
         else:
             return {"error": "No text or image provided to process."}
 
-        return {"parsed_transactions": transactions, "error": None}
+        return {"parsed_transactions": transactions, "allowed_categories": allowed_cats, "error": None}
     except Exception as e:
         return {"error": f"Parsing failed: {str(e)}"}
 

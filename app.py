@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.config import DEFAULT_CATEGORIES, GEMINI_API_KEY, save_api_key_to_env
 from src.database.db import (
     init_db, add_transaction, get_all_transactions, 
-    delete_transaction, set_monthly_budget, get_monthly_budget
+    delete_transaction, set_monthly_budget, get_monthly_budget,
+    get_user_categories, add_user_category, delete_user_category,
+    get_all_existing_users
 )
 from src.database.seeder import seed_guest_data_if_empty
 from src.analytics.engine import (
@@ -142,27 +144,47 @@ if not st.session_state.current_user:
             st.session_state.current_user_name = "Guest (Recruiter Demo)"
             st.rerun()
 
+    existing_users = get_all_existing_users()
+
     with w_col2:
         st.markdown("""
             <div class="welcome-card">
                 <span style="font-size: 2.5rem;">👤</span>
-                <h3 style="margin: 10px 0 6px 0;">Start Fresh</h3>
-                <span class="pill-badge pill-green">Clean Personal Ledger</span>
+                <h3 style="margin: 10px 0 6px 0;">Personal Profile</h3>
+                <span class="pill-badge pill-green">Persistent Personal Ledger</span>
                 <p style="color: #94a3b8; font-size: 0.9rem; margin-top: 12px;">
-                    Start with a <b>completely blank ledger (0 transactions)</b>. Enter your real daily expenses, upload your own receipts, and build your personal financial health tracker from scratch.
+                    Create a new profile or resume your existing account. All your previous transactions, custom categories, and budgets are saved permanently.
                 </p>
             </div>
         """, unsafe_allow_html=True)
         st.write("")
+        
+        # If there are returning users, show quick resume picker
+        if existing_users:
+            st.markdown("##### 🔄 Resume Existing Profile:")
+            user_options = {u['user_id']: f"{u['display_name']} ({u['tx_count']} records)" for u in existing_users}
+            chosen_existing_id = st.selectbox("Select your profile", options=list(user_options.keys()), format_func=lambda x: user_options[x], label_visibility="collapsed")
+            
+            if st.button("Resume Profile 🚀", type="primary", use_container_width=True):
+                chosen_meta = next(u for u in existing_users if u['user_id'] == chosen_existing_id)
+                st.session_state.current_user = chosen_existing_id
+                st.session_state.current_user_name = chosen_meta['display_name']
+                st.rerun()
+            
+            st.markdown("<hr style='margin: 12px 0; border-color: rgba(226, 232, 240, 0.1);'>", unsafe_allow_html=True)
+            st.markdown("##### ➕ Or Enter / Create Name:")
+
         with st.form("new_user_form"):
             user_name_input = st.text_input("What is your name?", placeholder="e.g. Ananya")
             user_budget_input = st.number_input("Your Monthly Target Budget (₹)", min_value=1000.0, value=15000.0, step=1000.0)
-            submitted = st.form_submit_button("Create My Fresh Ledger 🎯", type="secondary", use_container_width=True)
+            submitted = st.form_submit_button("Login / Create Profile 🎯", type="secondary", use_container_width=True)
             
             if submitted:
                 clean_name = user_name_input.strip() or "User"
                 user_id = clean_name.lower().replace(" ", "_")
-                set_monthly_budget(curr_month_str, user_budget_input, user_id=user_id)
+                existing_b = get_monthly_budget(curr_month_str, user_id=user_id)
+                if not existing_b:
+                    set_monthly_budget(curr_month_str, user_budget_input, user_id=user_id)
                 st.session_state.current_user = user_id
                 st.session_state.current_user_name = clean_name
                 st.rerun()
@@ -176,6 +198,7 @@ active_user_id = st.session_state.current_user
 active_user_name = st.session_state.current_user_name
 df_all = get_all_transactions(user_id=active_user_id)
 current_budget = get_monthly_budget(curr_month_str, user_id=active_user_id) or 15000.0
+user_categories = get_user_categories(user_id=active_user_id)
 
 # ----------------- TOP HEADER ----------------- #
 h_col1, h_col2 = st.columns([3, 1.2])
@@ -243,7 +266,28 @@ st.markdown(f"""
 # ========================================================================= #
 if selected_step == "Step 1: 📝 Add & Scan Expenses":
     st.subheader("Step 1: Log Your Expenses (Single, Multi-Day, or Full Statement Screenshot)")
-    st.caption("Choose how you want to enter your expenses. PennyPilot automatically scans lists and asks for clarifications.")
+    st.caption("Choose how you want to enter your expenses. PennyPilot automatically distinguishes between Money Spent (Debit) and Money Received (Credit).")
+
+    # ---------- CUSTOM CATEGORY MANAGEMENT EXPANDER ---------- #
+    with st.expander("🏷️ Manage Custom Categories (Create New Categories like 'Treat to Juniors', 'Freshers Party', 'Sports & Jersey', etc.)"):
+        c_col1, c_col2 = st.columns([3, 1])
+        with c_col1:
+            new_cat_name = st.text_input("New Category Name", placeholder="e.g. Treat to Juniors / Freshers Party / Sports & Jersey")
+        with c_col2:
+            st.write("")
+            st.write("")
+            if st.button("➕ Add Category", use_container_width=True):
+                if new_cat_name.strip():
+                    if add_user_category(new_cat_name.strip(), user_id=active_user_id):
+                        st.success(f"✅ Added '{new_cat_name.strip()}' to your active categories!")
+                        st.rerun()
+                    else:
+                        st.warning("Category already exists.")
+                else:
+                    st.warning("Please enter a category name.")
+        
+        st.caption("Active categories for your account:")
+        st.write(", ".join([f"`{c}`" for c in user_categories]))
 
     entry_mode = st.segmented_control(
         "Entry Type",
@@ -276,6 +320,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                             "image_bytes": None,
                             "mime_type": None,
                             "api_key": GEMINI_API_KEY,
+                            "allowed_categories": user_categories,
                             "parsed_transactions": [],
                             "needs_clarification": False,
                             "pending_questions": [],
@@ -310,6 +355,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                         "image_bytes": img_bytes,
                         "mime_type": mime,
                         "api_key": GEMINI_API_KEY,
+                        "allowed_categories": user_categories,
                         "parsed_transactions": [],
                         "needs_clarification": False,
                         "pending_questions": [],
@@ -340,7 +386,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                 manual_amt = st.number_input("Amount (₹)", min_value=1.0, value=250.0, step=50.0)
             with col_m2:
                 manual_recipient = st.text_input("Recipient / Merchant", placeholder="e.g. Chai Point / Auto / Mahima")
-                manual_cat = st.selectbox("Category", DEFAULT_CATEGORIES, index=0)
+                manual_cat = st.selectbox("Category", user_categories, index=0)
             with col_m3:
                 manual_app = st.selectbox("Payment Mode", ["GPay", "PhonePe", "Paytm", "Card", "Cash", "Auto-Debit", "Manual"])
                 manual_notes = st.text_input("Notes (Optional)", placeholder="e.g. Dinner treat")
@@ -444,8 +490,8 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                     )
 
                 with col_ans2:
-                    default_idx = DEFAULT_CATEGORIES.index(sug_cat) if sug_cat in DEFAULT_CATEGORIES else 0
-                    chosen_cat = st.selectbox(f"Category", DEFAULT_CATEGORIES, index=default_idx, key=f"cat_{idx}")
+                    default_idx = user_categories.index(sug_cat) if sug_cat in user_categories else 0
+                    chosen_cat = st.selectbox(f"Category", user_categories, index=default_idx, key=f"cat_{idx}")
                 
                 with col_ans3:
                     note_val = st.text_input(f"Context / Notes", placeholder="e.g. Dinner split reimbursement", key=f"note_{idx}")
