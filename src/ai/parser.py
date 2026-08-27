@@ -91,8 +91,7 @@ EXTRACTION & CLARIFICATION RULES:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=MultiTransactionResponse,
-                    temperature=0.0,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                    temperature=0.0
                 )
             )
             if response.text:
@@ -154,8 +153,7 @@ EXTRACTION & CLARIFICATION RULES:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=MultiTransactionResponse,
-                    temperature=0.0,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                    temperature=0.0
                 )
             )
             if response.text:
