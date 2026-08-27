@@ -23,7 +23,7 @@ from src.analytics.engine import (
 )
 from src.ai.memory import memory_store
 from src.ai.advisor import ask_financial_advisor
-from src.agents.workflow import pennypilot_agent, process_clarification_response
+from src.agents.workflow import pennypilot_agent, process_batch_clarification
 
 # ----------------- PAGE CONFIG ----------------- #
 st.set_page_config(
@@ -64,6 +64,15 @@ st.markdown("""
         text-align: center;
         height: 100%;
         box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.1);
+    }
+
+    .clarify-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-left: 5px solid #6366f1;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
     }
 
     .pill-badge {
@@ -196,6 +205,8 @@ with h_col2:
         st.session_state.current_user = None
         st.session_state.current_user_name = None
         st.session_state.advisor_chat_history = []
+        st.session_state.active_agent_state = None
+        st.session_state.pending_clarification = False
         st.rerun()
 
 st.markdown("<hr style='margin: 12px 0 20px 0; border-color: rgba(226, 232, 240, 0.15);'>", unsafe_allow_html=True)
@@ -231,12 +242,12 @@ st.markdown(f"""
 #                    STEP 1: ADD & SCAN EXPENSES                            #
 # ========================================================================= #
 if selected_step == "Step 1: 📝 Add & Scan Expenses":
-    st.subheader("Step 1: Log Your Expenses (Single, Multi-Day, or Screenshot)")
-    st.caption("Choose how you want to enter your expenses. PennyPilot automatically categorizes and learns your habits.")
+    st.subheader("Step 1: Log Your Expenses (Single, Multi-Day, or Full Statement Screenshot)")
+    st.caption("Choose how you want to enter your expenses. PennyPilot automatically scans lists and asks for clarifications.")
 
     entry_mode = st.segmented_control(
         "Entry Type",
-        options=["💬 AI Smart Prompt (Multi-Day Text)", "📸 Upload UPI Screenshot", "📅 Manual & Batch Date Entry"],
+        options=["💬 AI Smart Prompt (Multi-Day Text)", "📸 Upload Full UPI Screenshot", "📅 Manual & Batch Date Entry"],
         default="💬 AI Smart Prompt (Multi-Day Text)"
     )
 
@@ -245,7 +256,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
         st.markdown("##### 💬 Type naturally (handles single or multiple days in one prompt)")
         user_prompt = st.text_area(
             "Expense prompt",
-            placeholder="e.g. 'Yesterday spent 340 on Swiggy dinner. On 24th Aug paid 1200 for electricity bill. Today spent 120 on auto.'",
+            placeholder="e.g. 'Yesterday sent 320 to Mahima for dinner, paid 150 to Sanjay Kumar Yadav at canteen, and spent 280 on Blinkit.'",
             height=100,
             label_visibility="collapsed"
         )
@@ -258,7 +269,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                 elif not user_prompt.strip():
                     st.warning("Please type an expense description first.")
                 else:
-                    with st.spinner("AI parsing dates, amounts, and querying RAG memory..."):
+                    with st.spinner("AI extracting all transactions and checking RAG memory..."):
                         initial_state = {
                             "user_id": active_user_id,
                             "raw_text": user_prompt,
@@ -267,9 +278,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                             "api_key": GEMINI_API_KEY,
                             "parsed_transactions": [],
                             "needs_clarification": False,
-                            "clarification_question": None,
-                            "clarification_index": None,
-                            "user_response": None,
+                            "pending_questions": [],
                             "recorded_ids": [],
                             "error": None
                         }
@@ -284,15 +293,15 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                             st.success(f"✅ Successfully recorded {len(res.get('recorded_ids', []))} transaction(s)!")
                             st.rerun()
 
-    # ---------- OPTION B: UPI RECEIPT SCREENSHOT ---------- #
-    elif entry_mode == "📸 Upload UPI Screenshot":
-        st.markdown("##### 📸 Upload Google Pay, PhonePe, or Paytm receipt screenshot")
+    # ---------- OPTION B: FULL UPI RECEIPT SCREENSHOT ---------- #
+    elif entry_mode == "📸 Upload Full UPI Screenshot":
+        st.markdown("##### 📸 Upload Google Pay / PhonePe / Paytm / Passbook Screenshot (scans 1 to 20+ transactions)")
         up_file = st.file_uploader("Upload screenshot", type=["png", "jpg", "jpeg", "webp"], label_visibility="collapsed")
         
         if up_file:
-            st.image(up_file, caption="Payment Screenshot Preview", width=240)
-            if st.button("Extract & Record Screenshot 🔍", type="primary"):
-                with st.spinner("Multimodal Vision OCR extracting payment details..."):
+            st.image(up_file, caption="Payment Screenshot Preview", width=260)
+            if st.button("Extract All Transactions & Check Memory 🔍", type="primary"):
+                with st.spinner("Multimodal Vision scanning full screenshot & formulating questions..."):
                     img_bytes = up_file.getvalue()
                     mime = up_file.type
                     initial_state = {
@@ -303,9 +312,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                         "api_key": GEMINI_API_KEY,
                         "parsed_transactions": [],
                         "needs_clarification": False,
-                        "clarification_question": None,
-                        "clarification_index": None,
-                        "user_response": None,
+                        "pending_questions": [],
                         "recorded_ids": [],
                         "error": None
                     }
@@ -317,7 +324,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                         st.session_state.pending_clarification = True
                         st.rerun()
                     else:
-                        st.success("✅ Extracted and recorded transaction from screenshot!")
+                        st.success(f"✅ Extracted and recorded {len(res.get('recorded_ids', []))} transaction(s) from screenshot!")
                         st.rerun()
 
     # ---------- OPTION C: MANUAL DATE-WISE & BATCH ENTRY ---------- #
@@ -332,11 +339,11 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                 manual_date = st.date_input("Transaction Date", value=today)
                 manual_amt = st.number_input("Amount (₹)", min_value=1.0, value=250.0, step=50.0)
             with col_m2:
-                manual_recipient = st.text_input("Recipient / Merchant", placeholder="e.g. Chai Point / Auto / Ramesh")
+                manual_recipient = st.text_input("Recipient / Merchant", placeholder="e.g. Chai Point / Auto / Mahima")
                 manual_cat = st.selectbox("Category", DEFAULT_CATEGORIES, index=0)
             with col_m3:
                 manual_app = st.selectbox("Payment Mode", ["GPay", "PhonePe", "Paytm", "Card", "Cash", "Auto-Debit", "Manual"])
-                manual_notes = st.text_input("Notes (Optional)", placeholder="e.g. Evening snack")
+                manual_notes = st.text_input("Notes (Optional)", placeholder="e.g. Dinner treat")
                 
             if st.button("Save Manual Entry 💾", type="primary"):
                 if not manual_recipient.strip():
@@ -351,7 +358,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                         notes=manual_notes.strip(),
                         user_id=active_user_id
                     )
-                    memory_store.save_merchant_mapping(manual_recipient.strip(), manual_cat, manual_notes.strip())
+                    memory_store.save_merchant_mapping(manual_recipient.strip(), manual_cat, manual_notes.strip(), is_permanent_rule=False)
                     memory_store.index_transaction(tx_id, manual_date.strftime("%Y-%m-%d"), manual_amt, manual_recipient, manual_cat, manual_notes)
                     st.success(f"✅ Transaction of ₹{manual_amt} saved for {manual_date.strftime('%d %b %Y')}!")
                     st.rerun()
@@ -360,7 +367,7 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
             st.caption("Quickly add multiple days' expenses at once:")
             sample_batch = [
                 {"date": today - timedelta(days=2), "merchant": "Uber", "amount": 180.0, "category": "Travel & Commute", "notes": "Office commute"},
-                {"date": today - timedelta(days=1), "merchant": "Subway", "amount": 280.0, "category": "Food & Dining", "notes": "Lunch"},
+                {"date": today - timedelta(days=1), "merchant": "Mahima", "amount": 280.0, "category": "Food & Dining", "notes": "Lunch split"},
                 {"date": today, "merchant": "Blinkit", "amount": 340.0, "category": "Groceries", "notes": "Milk & bread"}
             ]
             batch_df = pd.DataFrame(sample_batch)
@@ -376,40 +383,90 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                     note = str(row.get("notes", ""))
                     if amt > 0:
                         t_id = add_transaction(d_str, amt, rec, cat, notes=note, user_id=active_user_id)
-                        memory_store.save_merchant_mapping(rec, cat, note)
+                        memory_store.save_merchant_mapping(rec, cat, note, is_permanent_rule=False)
                         memory_store.index_transaction(t_id, d_str, amt, rec, cat, note)
                         saved_count += 1
                 st.success(f"✅ Successfully saved {saved_count} transactions!")
                 st.rerun()
 
-    # ---------- HUMAN-IN-THE-LOOP CLARIFICATION MODAL ---------- #
+    # ========================================================================= #
+    #      MULTI-TRANSACTION CLARIFICATION & SMART MEMORY REVIEW HUB           #
+    # ========================================================================= #
     if st.session_state.pending_clarification and st.session_state.active_agent_state:
         state = st.session_state.active_agent_state
-        st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
-        st.warning("⚠️ **PennyPilot Needs a Quick Clarification** (Agentic Human-in-the-Loop)")
-        
-        q_text = state.get("clarification_question", "Please select a category for this transaction.")
-        st.info(f"🤔 **AI Question:** {q_text}")
+        pending_qs = state.get("pending_questions", [])
+        total_extracted = len(state.get("parsed_transactions", []))
 
-        idx = state.get("clarification_index") or 0
-        curr_tx = state.get("parsed_transactions", [])[idx] if state.get("parsed_transactions") else {}
+        st.markdown("<hr style='margin: 24px 0;'>", unsafe_allow_html=True)
+        st.markdown(f"""
+            <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid #6366f1; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                <h3 style="margin: 0 0 6px 0; color: #818cf8;">🤔 PennyPilot Needs Your Input ({len(pending_qs)} of {total_extracted} Transactions)</h3>
+                <p style="margin: 0; color: #94a3b8; font-size: 0.9rem;">
+                    PennyPilot extracted all transactions from your input. Please answer the specific questions below so each item is categorized accurately.
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
 
-        col_c1, col_c2 = st.columns([1, 1])
-        with col_c1:
-            selected_cat = st.selectbox("Select Category", DEFAULT_CATEGORIES, index=0)
-        with col_c2:
-            clarify_note = st.text_input("Context / Note (e.g. 'Canteen Lunch', 'Flat Maintenance')", value="")
+        user_clarifications = []
 
-        if st.button("💾 Teach Memory & Save (Permanent RAG)", type="primary", use_container_width=True):
-            updated_state = process_clarification_response(
-                state=state,
-                chosen_category=selected_cat,
-                user_notes=clarify_note
-            )
-            st.session_state.pending_clarification = False
-            st.session_state.active_agent_state = None
-            st.success(f"✅ Learned! Next time you pay '{curr_tx.get('recipient_name')}', PennyPilot will auto-categorize it as '{selected_cat}'!")
-            st.rerun()
+        with st.form("batch_clarification_form"):
+            for q_item in pending_qs:
+                idx = q_item["index"]
+                rec_name = q_item["recipient_name"]
+                amt = q_item["amount"]
+                dt = q_item["date"]
+                sug_cat = q_item["suggested_category"]
+                q_text = q_item["question"]
+                e_type = q_item.get("entity_type", "merchant")
+
+                st.markdown(f"""
+                    <div class="clarify-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-size: 1.1rem; font-weight: 700; color: #f8fafc;">₹{amt:,.2f} to {rec_name}</span>
+                            <span class="pill-badge pill-blue">📅 {dt}</span>
+                        </div>
+                        <p style="margin: 0 0 10px 0; color: #cbd5e1; font-weight: 500;">❓ <b>AI Question:</b> {q_text}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                col_ans1, col_ans2, col_ans3 = st.columns([1.5, 1.5, 1.2])
+
+                with col_ans1:
+                    default_idx = DEFAULT_CATEGORIES.index(sug_cat) if sug_cat in DEFAULT_CATEGORIES else 0
+                    chosen_cat = st.selectbox(f"Category for '{rec_name}'", DEFAULT_CATEGORIES, index=default_idx, key=f"cat_{idx}")
+                
+                with col_ans2:
+                    note_val = st.text_input(f"Context / Notes", placeholder="e.g. Dinner split / Canteen / Skincare", key=f"note_{idx}")
+
+                with col_ans3:
+                    # Smart rule default: False for peers/friends like Mahima, True for obvious merchants/shops
+                    default_remember = True if e_type == "merchant" else False
+                    remember_rule = st.checkbox(
+                        "📌 Always remember this recipient?",
+                        value=default_remember,
+                        key=f"rem_{idx}",
+                        help="Check for shops/canteens (e.g., Sanjay Yadav Canteen). UNCHECK for friends (e.g., Mahima) so category isn't locked!"
+                    )
+
+                user_clarifications.append({
+                    "index": idx,
+                    "category": chosen_cat,
+                    "notes": note_val,
+                    "remember_rule": remember_rule
+                })
+                st.markdown("<hr style='margin: 10px 0; border-color: rgba(226, 232, 240, 0.1);'>", unsafe_allow_html=True)
+
+            submit_all = st.form_submit_button(f"💾 Save All {len(user_clarifications)} Verified Transactions 🚀", type="primary", use_container_width=True)
+
+            if submit_all:
+                updated_state = process_batch_clarification(
+                    state=state,
+                    clarified_items=user_clarifications
+                )
+                st.session_state.pending_clarification = False
+                st.session_state.active_agent_state = None
+                st.success(f"✅ Successfully saved and learned rules for {len(updated_state.get('recorded_ids', []))} transactions!")
+                st.rerun()
 
 # ========================================================================= #
 #                    STEP 2: SPENDING BREAKDOWN & TRENDS                    #

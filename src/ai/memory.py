@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from ..config import CHROMA_PERSIST_DIR, GEMINI_API_KEY
 
 class MerchantMemory:
-    """RAG-based Vector Memory for Learning and Auto-resolving Ambiguous Merchants."""
+    """RAG-based Vector Memory for Learning and Auto-resolving Merchants & Friends."""
     
     def __init__(self, persist_dir: str = CHROMA_PERSIST_DIR):
         self.client = chromadb.PersistentClient(path=persist_dir)
@@ -23,19 +23,22 @@ class MerchantMemory:
         merchant_name: str,
         category: str,
         notes: str = "",
-        upi_id: Optional[str] = None
+        upi_id: Optional[str] = None,
+        is_permanent_rule: bool = True
     ):
-        """Stores or updates a learned merchant category in the vector memory."""
+        """Stores or updates a learned recipient category in vector memory."""
         clean_key = (merchant_name or "").strip().lower()
         if not clean_key:
             return
 
-        doc_text = f"Merchant: {merchant_name}. UPI: {upi_id or 'N/A'}. Category: {category}. Context: {notes}"
+        rule_type = "Permanent Rule" if is_permanent_rule else "Variable Peer"
+        doc_text = f"Recipient: {merchant_name}. UPI: {upi_id or 'N/A'}. Category: {category}. Rule: {rule_type}. Context: {notes}"
         metadata = {
             "merchant_name": merchant_name,
             "category": category,
             "notes": notes or "",
-            "upi_id": upi_id or ""
+            "upi_id": upi_id or "",
+            "is_permanent_rule": bool(is_permanent_rule)
         }
 
         self.collection.upsert(
@@ -45,7 +48,7 @@ class MerchantMemory:
         )
 
     def query_merchant(self, query_text: str, n_results: int = 1) -> Optional[Dict[str, Any]]:
-        """Queries the vector database for the closest matching merchant memory."""
+        """Queries the vector database for matching merchant or friend memory."""
         if not query_text or self.collection.count() == 0:
             return None
 
@@ -59,7 +62,7 @@ class MerchantMemory:
             matched_id = results["ids"][0][0]
             distance = results["distances"][0][0] if "distances" in results and results["distances"] else 1.0
             
-            # Match if ID matches or cosine distance is <= 0.65
+            # Match if ID matches or cosine distance is close
             if matched_id == clean_query or distance <= 0.65:
                 meta = results["metadatas"][0][0]
                 return {
@@ -67,6 +70,7 @@ class MerchantMemory:
                     "category": meta.get("category"),
                     "notes": meta.get("notes"),
                     "upi_id": meta.get("upi_id"),
+                    "is_permanent_rule": bool(meta.get("is_permanent_rule", True)),
                     "confidence": max(0.0, 1.0 - distance)
                 }
         return None

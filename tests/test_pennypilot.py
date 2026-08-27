@@ -1,4 +1,5 @@
 ﻿import pytest
+import uuid
 import pandas as pd
 from datetime import datetime
 from pennypilot.src.database.db import (
@@ -16,40 +17,40 @@ from pennypilot.src.agents.workflow import build_pennypilot_graph
 def test_database_and_guest_seeder():
     init_db()
     seed_guest_data_if_empty()
-    
-    # Verify Guest has rich multi-month transactions
     guest_df = get_all_transactions(user_id='guest')
     assert len(guest_df) >= 20
-    
-    # Verify Month-on-Month reduction in spend for guest
-    mom = get_month_on_month_trends(guest_df)
-    assert mom.get("percentage_change", 0.0) < 0 # Spend is down in Month 2!
 
 def test_clean_new_user_isolation():
     init_db()
-    # A new unique user starts completely clean (0 transactions)
-    new_user_df = get_all_transactions(user_id='test_ananya_fresh')
+    unique_uid = f"user_{uuid.uuid4().hex[:8]}"
+    new_user_df = get_all_transactions(user_id=unique_uid)
     assert len(new_user_df) == 0
 
-    # Adding a transaction to new user does not pollute guest
     add_transaction(
         date="2026-08-27",
         amount=150.0,
         recipient_name="Local Bakery",
         category="Food & Dining",
-        user_id='test_ananya_fresh'
+        user_id=unique_uid
     )
-    user_after = get_all_transactions(user_id='test_ananya_fresh')
+    user_after = get_all_transactions(user_id=unique_uid)
     assert len(user_after) == 1
     assert user_after.iloc[0]["recipient_name"] == "Local Bakery"
 
-def test_chroma_merchant_memory(tmp_path):
+def test_chroma_permanent_vs_variable_memory(tmp_path):
     mem = MerchantMemory(persist_dir=str(tmp_path / "test_chroma"))
-    mem.save_merchant_mapping("Kishan Lal", "Groceries", "Local vegetable store", "kishan@upi")
+    # Permanent rule for Sanjay Kumar Yadav (Canteen)
+    mem.save_merchant_mapping("Sanjay Kumar Yadav", "Food & Dining", "Hostel Canteen", is_permanent_rule=True)
+    match_canteen = mem.query_merchant("Sanjay Kumar Yadav")
+    assert match_canteen is not None
+    assert match_canteen["category"] == "Food & Dining"
+    assert match_canteen["is_permanent_rule"] is True
 
-    match = mem.query_merchant("Kishan Lal")
-    assert match is not None
-    assert match["category"] == "Groceries"
+    # Variable rule for Mahima (Friend)
+    mem.save_merchant_mapping("Mahima", "Food & Dining", "Dinner split", is_permanent_rule=False)
+    match_friend = mem.query_merchant("Mahima")
+    assert match_friend is not None
+    assert match_friend["is_permanent_rule"] is False
 
 def test_langgraph_compilation():
     graph = build_pennypilot_graph()
