@@ -16,7 +16,7 @@ def init_db():
     with get_connection() as conn:
         cursor = conn.cursor()
         
-        # Transactions Table with user_id
+        # Transactions Table with user_id & transaction_type
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +27,7 @@ def init_db():
                 recipient_upi TEXT,
                 category TEXT NOT NULL,
                 payment_app TEXT DEFAULT 'Manual',
+                transaction_type TEXT DEFAULT 'DEBIT',
                 raw_input TEXT,
                 notes TEXT,
                 confidence_score REAL DEFAULT 1.0,
@@ -35,11 +36,21 @@ def init_db():
             )
         ''')
 
-        # Check if user_id column exists (for migrations)
+        # Check and migrate columns if missing
         cursor.execute("PRAGMA table_info(transactions)")
         cols = [c[1] for c in cursor.fetchall()]
         if 'user_id' not in cols:
             cursor.execute("ALTER TABLE transactions ADD COLUMN user_id TEXT DEFAULT 'guest'")
+        if 'transaction_type' not in cols:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN transaction_type TEXT DEFAULT 'DEBIT'")
+
+        # If any existing transaction has 'received' in notes, auto-convert it to 'CREDIT'
+        cursor.execute('''
+            UPDATE transactions 
+            SET transaction_type = 'CREDIT' 
+            WHERE (notes LIKE '%received%' OR notes LIKE '%refund%' OR raw_input LIKE '%received%') 
+              AND (transaction_type IS NULL OR transaction_type = 'DEBIT')
+        ''')
 
         # Monthly Budgets Table
         cursor.execute('''
@@ -75,6 +86,7 @@ def add_transaction(
     category: str,
     recipient_upi: Optional[str] = None,
     payment_app: str = 'Manual',
+    transaction_type: str = 'DEBIT',
     raw_input: Optional[str] = None,
     notes: Optional[str] = None,
     confidence_score: float = 1.0,
@@ -83,16 +95,17 @@ def add_transaction(
 ) -> int:
     """Inserts a new transaction for a specific user and returns its ID."""
     created_at = datetime.now().isoformat()
+    clean_type = "CREDIT" if "credit" in transaction_type.lower() or "received" in transaction_type.lower() else "DEBIT"
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO transactions (
                 user_id, date, amount, recipient_name, recipient_upi, category,
-                payment_app, raw_input, notes, confidence_score, is_clarified, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payment_app, transaction_type, raw_input, notes, confidence_score, is_clarified, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             user_id, date, amount, recipient_name, recipient_upi, category,
-            payment_app, raw_input, notes, confidence_score, is_clarified, created_at
+            payment_app, clean_type, raw_input, notes, confidence_score, is_clarified, created_at
         ))
         conn.commit()
         return cursor.lastrowid

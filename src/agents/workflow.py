@@ -20,7 +20,7 @@ class AgentState(TypedDict):
 # ----------------- NODE DEFINITIONS ----------------- #
 
 def parse_input_node(state: AgentState) -> Dict[str, Any]:
-    """Node 1: Extracts ALL transactions from text or UPI screenshot."""
+    """Node 1: Extracts ALL transactions (debits & credits) from text or UPI screenshot."""
     api_key = state.get("api_key")
     transactions = []
     
@@ -52,7 +52,6 @@ def rag_merchant_node(state: AgentState) -> Dict[str, Any]:
         match = memory_store.query_merchant(merchant)
         
         if match:
-            # Check if this is a permanent merchant rule (e.g. Canteen, Wifi, BESCOM)
             if match.get("is_permanent_rule"):
                 tx["category"] = match["category"]
                 tx["notes"] = f"{tx.get('notes') or ''} (Auto-resolved: {match['notes']})".strip()
@@ -60,9 +59,8 @@ def rag_merchant_node(state: AgentState) -> Dict[str, Any]:
                 tx["needs_clarification"] = False
                 tx["clarification_question"] = None
             else:
-                # Variable Peer/Friend: Provide smart default category, but still ask for confirmation!
                 tx["category"] = match["category"]
-                tx["clarification_question"] = f"Last time you paid {merchant} for '{match.get('notes', match['category'])}'. What was this ₹{tx.get('amount')} payment for?"
+                tx["clarification_question"] = f"Last time you interacted with {merchant} for '{match.get('notes', match['category'])}'. What was this payment for?"
                 tx["needs_clarification"] = True
         
         updated_list.append(tx)
@@ -76,12 +74,15 @@ def clarification_router_node(state: AgentState) -> Dict[str, Any]:
 
     for idx, tx in enumerate(transactions):
         if tx.get("needs_clarification"):
-            q = tx.get("clarification_question") or f"What category is ₹{tx.get('amount')} to '{tx.get('recipient_name')}' for on {tx.get('date')}?"
+            ttype = tx.get("transaction_type", "DEBIT")
+            action_word = "received from" if ttype == "CREDIT" else "paid to"
+            q = tx.get("clarification_question") or f"What was this ₹{tx.get('amount')} {action_word} '{tx.get('recipient_name')}' for on {tx.get('date')}?"
             pending_questions.append({
                 "index": idx,
                 "recipient_name": tx.get("recipient_name"),
                 "amount": tx.get("amount"),
                 "date": tx.get("date"),
+                "transaction_type": ttype,
                 "suggested_category": tx.get("category", "Miscellaneous"),
                 "question": q,
                 "entity_type": tx.get("entity_type", "merchant")
@@ -100,7 +101,6 @@ def save_transaction_node(state: AgentState) -> Dict[str, Any]:
     recorded_ids = []
 
     for tx in transactions:
-        # Don't save transactions that still require clarification
         if tx.get("needs_clarification"):
             continue
 
@@ -111,6 +111,7 @@ def save_transaction_node(state: AgentState) -> Dict[str, Any]:
             recipient_upi=tx.get("recipient_upi"),
             category=tx.get("category", "Miscellaneous"),
             payment_app=tx.get("payment_app", "Manual"),
+            transaction_type=tx.get("transaction_type", "DEBIT"),
             raw_input=state.get("raw_text") or "UPI Screenshot",
             notes=tx.get("notes"),
             confidence_score=float(tx.get("confidence", 1.0)),
@@ -119,7 +120,6 @@ def save_transaction_node(state: AgentState) -> Dict[str, Any]:
         )
         recorded_ids.append(tx_id)
 
-        # Index transaction for semantic search
         memory_store.index_transaction(
             tx_id=tx_id,
             date=tx.get("date"),
@@ -173,27 +173,27 @@ def process_batch_clarification(
     state: AgentState,
     clarified_items: List[Dict[str, Any]]
 ) -> AgentState:
-    """Applies user clarification for ALL ambiguous items simultaneously and commits to database."""
+    """Applies user clarification for ALL items, sets DEBIT/CREDIT properly, and commits to database."""
     transactions = state.get("parsed_transactions", [])
     user_id = state.get("user_id", "guest")
     recorded_ids = []
 
-    # Map updates by index
     updates_by_idx = {item["index"]: item for item in clarified_items}
 
     for idx, tx in enumerate(transactions):
         if idx in updates_by_idx:
             u = updates_by_idx[idx]
             chosen_cat = u.get("category", tx.get("category", "Miscellaneous"))
+            chosen_type = u.get("transaction_type", tx.get("transaction_type", "DEBIT"))
             user_note = u.get("notes", "")
             remember_rule = u.get("remember_rule", False)
 
             tx["category"] = chosen_cat
+            tx["transaction_type"] = chosen_type
             tx["notes"] = f"{tx.get('notes') or ''} {user_note}".strip()
             tx["needs_clarification"] = False
             tx["confidence"] = 1.0
 
-            # 🧠 Learn in ChromaDB vector memory (Permanent rule vs Variable peer)
             memory_store.save_merchant_mapping(
                 merchant_name=tx.get("recipient_name", ""),
                 category=chosen_cat,
@@ -202,7 +202,6 @@ def process_batch_clarification(
                 is_permanent_rule=remember_rule
             )
 
-        # Save to SQLite database
         tx_id = add_transaction(
             date=tx.get("date"),
             amount=float(tx.get("amount", 0.0)),
@@ -210,6 +209,7 @@ def process_batch_clarification(
             recipient_upi=tx.get("recipient_upi"),
             category=tx.get("category", "Miscellaneous"),
             payment_app=tx.get("payment_app", "Manual"),
+            transaction_type=tx.get("transaction_type", "DEBIT"),
             raw_input=state.get("raw_text") or "UPI Screenshot",
             notes=tx.get("notes"),
             confidence_score=float(tx.get("confidence", 1.0)),
@@ -218,7 +218,6 @@ def process_batch_clarification(
         )
         recorded_ids.append(tx_id)
 
-        # Index transaction into ChromaDB
         memory_store.index_transaction(
             tx_id=tx_id,
             date=tx.get("date"),

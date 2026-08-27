@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -231,10 +231,10 @@ mom = get_month_on_month_trends(df_all)
 
 st.markdown(f"""
     <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
-        <span class="pill-badge pill-blue">Month Spend: <b>₹{burn['month_spend']:,.2f}</b></span>
+        <span class="pill-badge pill-blue">Net Month Spend: <b>₹{burn['month_spend']:,.2f}</b></span>
+        <span class="pill-badge pill-green">Money Received / Reimbursements: <b>+₹{summary['total_received']:,.2f}</b></span>
         <span class="pill-badge pill-purple">Target Budget: <b>₹{current_budget:,.2f}</b></span>
-        <span class="pill-badge pill-green">Safe Daily Allowance: <b>₹{burn['safe_daily_allowance'] or 0:,.2f}/day</b></span>
-        <span class="pill-badge pill-orange">MoM Shift: <b>{mom['percentage_change']}%</b></span>
+        <span class="pill-badge pill-orange">Safe Daily Allowance: <b>₹{burn['safe_daily_allowance'] or 0:,.2f}/day</b></span>
     </div>
 """, unsafe_allow_html=True)
 
@@ -419,37 +419,50 @@ if selected_step == "Step 1: 📝 Add & Scan Expenses":
                 q_text = q_item["question"]
                 e_type = q_item.get("entity_type", "merchant")
 
+                ttype = q_item.get("transaction_type", "DEBIT")
+                is_credit = (ttype == "CREDIT")
+                badge_html = f'<span class="pill-badge pill-green">💰 Money Received (+₹{amt:,.2f})</span>' if is_credit else f'<span class="pill-badge pill-red">💸 Money Spent (-₹{amt:,.2f})</span>'
+
                 st.markdown(f"""
                     <div class="clarify-card">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                            <span style="font-size: 1.1rem; font-weight: 700; color: #f8fafc;">₹{amt:,.2f} to {rec_name}</span>
-                            <span class="pill-badge pill-blue">📅 {dt}</span>
+                            <span style="font-size: 1.1rem; font-weight: 700; color: #f8fafc;">{rec_name}</span>
+                            <div>{badge_html} <span class="pill-badge pill-blue">📅 {dt}</span></div>
                         </div>
                         <p style="margin: 0 0 10px 0; color: #cbd5e1; font-weight: 500;">❓ <b>AI Question:</b> {q_text}</p>
                     </div>
                 """, unsafe_allow_html=True)
 
-                col_ans1, col_ans2, col_ans3 = st.columns([1.5, 1.5, 1.2])
+                col_ans1, col_ans2, col_ans3, col_ans4 = st.columns([1.2, 1.4, 1.4, 1.2])
 
                 with col_ans1:
-                    default_idx = DEFAULT_CATEGORIES.index(sug_cat) if sug_cat in DEFAULT_CATEGORIES else 0
-                    chosen_cat = st.selectbox(f"Category for '{rec_name}'", DEFAULT_CATEGORIES, index=default_idx, key=f"cat_{idx}")
-                
-                with col_ans2:
-                    note_val = st.text_input(f"Context / Notes", placeholder="e.g. Dinner split / Canteen / Skincare", key=f"note_{idx}")
-
-                with col_ans3:
-                    # Smart rule default: False for peers/friends like Mahima, True for obvious merchants/shops
-                    default_remember = True if e_type == "merchant" else False
-                    remember_rule = st.checkbox(
-                        "📌 Always remember this recipient?",
-                        value=default_remember,
-                        key=f"rem_{idx}",
-                        help="Check for shops/canteens (e.g., Sanjay Yadav Canteen). UNCHECK for friends (e.g., Mahima) so category isn't locked!"
+                    chosen_type = st.selectbox(
+                        f"Type for '{rec_name}'",
+                        ["DEBIT (Spent)", "CREDIT (Received / Refund)"],
+                        index=1 if is_credit else 0,
+                        key=f"type_{idx}"
                     )
 
+                with col_ans2:
+                    default_idx = DEFAULT_CATEGORIES.index(sug_cat) if sug_cat in DEFAULT_CATEGORIES else 0
+                    chosen_cat = st.selectbox(f"Category", DEFAULT_CATEGORIES, index=default_idx, key=f"cat_{idx}")
+                
+                with col_ans3:
+                    note_val = st.text_input(f"Context / Notes", placeholder="e.g. Dinner split reimbursement", key=f"note_{idx}")
+
+                with col_ans4:
+                    default_remember = True if e_type == "merchant" else False
+                    remember_rule = st.checkbox(
+                        "📌 Always remember?",
+                        value=default_remember,
+                        key=f"rem_{idx}",
+                        help="Check for shops/canteens (e.g. Sanjay Yadav Canteen). UNCHECK for friends (e.g. Mahima/Tanya)."
+                    )
+
+                final_type = "CREDIT" if "CREDIT" in chosen_type else "DEBIT"
                 user_clarifications.append({
                     "index": idx,
+                    "transaction_type": final_type,
                     "category": chosen_cat,
                     "notes": note_val,
                     "remember_rule": remember_rule
@@ -478,13 +491,13 @@ elif selected_step == "Step 2: 📊 Spending Breakdown & Trends":
     # Metrics Row
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Total Spent", f"₹{summary['total_spend']:,.2f}")
+        st.metric("Net Total Spent", f"₹{summary['total_spend']:,.2f}", help="Gross Spent minus Money Received / Reimbursements")
     with m2:
-        st.metric(f"Spend in {today.strftime('%B')}", f"₹{burn['month_spend']:,.2f}", delta=f"{mom['percentage_change']}% MoM" if mom.get('prev_month') else None)
+        st.metric("Total Money Received", f"+₹{summary['total_received']:,.2f}", delta="Reimbursements / Income", delta_color="normal")
     with m3:
-        st.metric("Top Spending Category", summary["top_category"])
+        st.metric(f"Net Spend in {today.strftime('%B')}", f"₹{burn['month_spend']:,.2f}", delta=f"{mom['percentage_change']}% MoM" if mom.get('prev_month') else None)
     with m4:
-        st.metric("Avg Transaction Size", f"₹{summary['avg_transaction']:,.2f}")
+        st.metric("Top Spending Category", summary["top_category"])
 
     st.markdown("<hr style='margin: 16px 0;'>", unsafe_allow_html=True)
 
@@ -547,8 +560,22 @@ elif selected_step == "Step 2: 📊 Spending Breakdown & Trends":
         ]
     
     if not display_df.empty:
-        table_show = display_df[["id", "date", "recipient_name", "amount", "category", "payment_app", "notes"]].copy()
-        table_show["amount"] = table_show["amount"].apply(lambda x: f"₹{x:,.2f}")
+        table_show = display_df[["id", "date", "transaction_type", "recipient_name", "amount", "category", "payment_app", "notes"]].copy()
+        table_show["date"] = pd.to_datetime(table_show["date"]).dt.strftime("%Y-%m-%d")
+        
+        # Format Amount with +/- based on transaction_type
+        def fmt_amt(row):
+            amt = row["amount"]
+            if str(row["transaction_type"]).upper() == "CREDIT":
+                return f"+₹{amt:,.2f} (Received)"
+            return f"-₹{amt:,.2f} (Spent)"
+
+        table_show["amount"] = table_show.apply(fmt_amt, axis=1)
+        table_show = table_show.rename(columns={
+            "transaction_type": "Type",
+            "recipient_name": "Recipient / Sender",
+            "payment_app": "Payment Mode"
+        })
         st.dataframe(table_show, use_container_width=True, hide_index=True)
     else:
         st.info("No records in this ledger yet.")
