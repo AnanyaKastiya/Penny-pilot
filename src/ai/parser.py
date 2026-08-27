@@ -1,12 +1,12 @@
 ﻿import json
 import os
+import io
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from PIL import Image
-import io
 
 from ..config import GEMINI_API_KEY, DEFAULT_CATEGORIES, MODEL_CANDIDATES
 
@@ -35,6 +35,25 @@ def get_client(api_key: Optional[str] = None) -> genai.Client:
         raise ValueError("GEMINI_API_KEY is not configured. Please set it in .env or provide it in the UI.")
     return genai.Client(api_key=key)
 
+def optimize_image_for_fast_ocr(image_bytes: bytes, max_dimension: int = 1200, quality: int = 85) -> Tuple[bytes, str]:
+    """Resizes and compresses screenshots for ultra-fast network transfer and instantaneous OCR."""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode in ('RGBA', 'P', 'LA'):
+            img = img.convert('RGB')
+        
+        w, h = img.size
+        if max(w, h) > max_dimension:
+            ratio = max_dimension / max(w, h)
+            new_size = (int(w * ratio), int(h * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+        
+        out_buf = io.BytesIO()
+        img.save(out_buf, format='JPEG', quality=quality, optimize=True)
+        return out_buf.getvalue(), 'image/jpeg'
+    except Exception:
+        return image_bytes, 'image/jpeg'
+
 def parse_expense_text(
     text: str, 
     api_key: Optional[str] = None, 
@@ -48,13 +67,12 @@ def parse_expense_text(
     categories_str = ", ".join(cats)
     system_instruction = f"""You are PennyPilot, an expert financial entity extractor.
 Current Date: {today_str}
-Allowed Categories (including user custom categories): [{categories_str}]
+Allowed Categories: [{categories_str}]
 
 Rules for Transaction Types:
 1. 'DEBIT' = User spent, sent, paid, or bought something.
-2. 'CREDIT' = User received money, friend repaid split bill, refund, or cashback (e.g., 'received 300 from Tanya', 'Mahima sent me 100 for dinner').
-3. You may assign any category from the Allowed Categories list, including specific custom categories if appropriate.
-4. For peer transfers (Mahima, Tanya, Rahul), set entity_type='peer_friend' and needs_clarification=True.
+2. 'CREDIT' = User received money, friend repaid split bill, refund, or cashback.
+3. For peer transfers (Mahima, Tanya, Rahul), set entity_type='peer_friend' and needs_clarification=True.
 """
 
     prompt = f"User Input: \"{text}\""
@@ -68,7 +86,8 @@ Rules for Transaction Types:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=MultiTransactionResponse,
-                    temperature=0.1
+                    temperature=0.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
                 )
             )
             if response.text:
@@ -97,15 +116,18 @@ def parse_receipt_image(
     api_key: Optional[str] = None,
     allowed_categories: Optional[List[str]] = None
 ) -> List[ParsedTransaction]:
-    """Scans and extracts ALL transactions from a screenshot considering user custom categories."""
+    """Scans and extracts ALL transactions from a screenshot considering user custom categories with ultra-low latency."""
     client = get_client(api_key)
     today_str = datetime.now().strftime("%Y-%m-%d")
     cats = allowed_categories or DEFAULT_CATEGORIES
     categories_str = ", ".join(cats)
 
+    # 1. Optimize image payload for instantaneous vision tokenization
+    opt_bytes, opt_mime = optimize_image_for_fast_ocr(image_bytes)
+
     system_instruction = f"""You are PennyPilot, an elite multimodal financial scanner specialized in Indian UPI screenshots (Google Pay, PhonePe, Paytm, CRED, Bank Statements).
 Current Date: {today_str}
-Allowed Categories (including user custom categories): [{categories_str}]
+Allowed Categories: [{categories_str}]
 
 CRITICAL TRANSACTION TYPE DETECTION RULES:
 1. Pay close attention to whether the transaction is an Outgoing Expense (DEBIT) or Incoming Money (CREDIT):
@@ -118,10 +140,9 @@ CRITICAL TRANSACTION TYPE DETECTION RULES:
 3. INDIVIDUAL CLARIFICATION RULES:
    - For 'CREDIT' payments from friends, ask: "What was this ₹X received from [Name] for? (e.g., Food split reimbursement, Rent share)".
    - For 'DEBIT' payments to friends/unknowns, ask what the payment was for.
-   - You may suggest standard or custom categories from the Allowed Categories list.
 """
 
-    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    image_part = types.Part.from_bytes(data=opt_bytes, mime_type=opt_mime)
     
     for model_name in MODEL_CANDIDATES:
         try:
@@ -132,7 +153,8 @@ CRITICAL TRANSACTION TYPE DETECTION RULES:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=MultiTransactionResponse,
-                    temperature=0.1
+                    temperature=0.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
                 )
             )
             if response.text:

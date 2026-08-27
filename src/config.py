@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -34,7 +34,7 @@ DEFAULT_CATEGORIES = [
     'Miscellaneous'
 ]
 
-# Resilient Model Fallback Sequence
-MODEL_CANDIDATES = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
-PRIMARY_MODEL = 'gemini-3.7-flash'
-FALLBACK_MODEL = 'gemini-3.5-flash-lite'
+# Resilient High-Speed Model Candidates
+MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash-lite']
+PRIMARY_MODEL = 'gemini-2.5-flash'
+FALLBACK_MODEL = 'gemini-2.0-flash'
