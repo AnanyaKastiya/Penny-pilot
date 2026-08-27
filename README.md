@@ -16,43 +16,6 @@ Standard expense trackers (Splitwise, Money Manager, Excel) fail because **manua
 4. **Human-in-the-Loop (HITL) State Machine (LangGraph):** Gracefully routes between parsing, RAG resolution, human clarification breakpoints, and database persistence.
 5. **Deterministic Math (Pandas & NumPy):** 100% accurate, non-hallucinated Week-on-Week (WoW) and Month-on-Month (MoM) percentage shifts, category surges, daily burn rates, and recurring leak detection.
 
----
-
-## 🏗️ System Architecture
-
-```
-                  [ USER INPUT: Natural Text / UPI Screenshot ]
-                                        │
-                                        ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────┐
- │                         LANGGRAPH MULTI-AGENT STATE MACHINE                            │
- │                                                                                        │
- │  ┌─────────────────────────────────┐        ┌───────────────────────────────────────┐  │
- │  │ 👁️ Node 1: Multimodal Parser    │ ─────► │ 🧠 Node 2: RAG Merchant Resolver      │  │
- │  │ (Gemini 3.6/3.7 Vision API)     │        │ (ChromaDB Vector Semantic Memory)     │  │
- │  └─────────────────────────────────┘        └──────────────────┬────────────────────┘  │
- │                                                                │                       │
- │                                                 Is category clear?                     │
- │                                                  ╱            ╲                        │
- │                                              [ YES ]        [ NO ]                     │
- │                                                ╱                ╲                      │
- │                                               ▼                  ▼                     │
- │  ┌─────────────────────────────────┐   ┌────────────┐   ┌───────────────────────────┐  │
- │  │ 💾 Node 4: Transaction Recorder │ ◄─┤ Auto-Tag   │   │ ⏸️ Node 3: HITL Clarifier │  │
- │  │ (Saves to SQLite + ChromaDB)    │   └────────────┘   │ (Pauses graph, asks user  │  │
- │  └────────────────┬────────────────┘                    │ in UI, learns answer)     │  │
- │                   │                                     └─────────────┬─────────────┘  │
- │                   ▼                                                   │                │
- │  ┌─────────────────────────────────┐                                  │                │
- │  │ 📊 Node 5: Analytics & Strategy │ ◄────────────────────────────────┘                │
- │  │ (Pandas Engine: WoW, MoM,       │                                                   │
- │  │  Burn Rate & Budget Optimizer)  │                                                   │
- │  └─────────────────────────────────┘                                                   │
- └────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## ✨ Key Features
 
 ### ⚡ 1. Multimodal UPI & Receipt Scanner
@@ -88,35 +51,5 @@ Standard expense trackers (Splitwise, Money Manager, Excel) fail because **manua
 
 ---
 
-## 🚀 Quickstart Guide
-
-### 1. Clone & Install Dependencies
-```bash
-git clone https://github.com/AnanyaKastiya/Penny-pilot.git
-cd Penny-pilot
-pip install -r requirements.txt
-```
-
-### 2. Set Up Environment
-Create a `.env` file in the root directory:
-```env
-GEMINI_API_KEY=your_google_gemini_api_key_here
-```
-*(Or enter your key directly in the Streamlit sidebar!)*
-
-### 3. Run the Streamlit Web Application
-```bash
-streamlit run app.py
-```
-
-### 4. Run Automated Tests
-```bash
-pytest tests/ -v
-```
-
----
-
 ## 👩‍💻 Author
 **Ananya Kastiya**  
-Live Application: [https://pennypilot-ai.streamlit.app](https://pennypilot-ai.streamlit.app)  
-GitHub Repository: [https://github.com/AnanyaKastiya/Penny-pilot](https://github.com/AnanyaKastiya/Penny-pilot)
